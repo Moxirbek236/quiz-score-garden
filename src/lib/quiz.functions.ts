@@ -1,8 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import {
+  buildReview,
   gradeAnswers,
   MAX_ANSWERS_PER_SUBMISSION,
-  parseFields,
   sanitizeAnswers,
   type AnswerMap,
 } from "./grading";
@@ -21,8 +21,12 @@ function safeEqual(a: string, b: string) {
   return diff === 0;
 }
 
+/** TEACHER_PASSWORD o'rnatilmagan bo'lsa ishlatiladigan standart parol. */
+const DEFAULT_TEACHER_PASSWORD = "Oybek_Linux";
+
 function checkTeacher(pw: string) {
-  const expected = process.env["TEACHER_PASSWORD"];
+  // Har chaqiruvda env'dan o'qiladi: o'zgartirib qayta deploy qilsangiz darhol kuchga kiradi.
+  const expected = process.env["TEACHER_PASSWORD"] || DEFAULT_TEACHER_PASSWORD;
   if (!expected || !safeEqual(pw, expected)) throw new Error("Parol noto'g'ri");
 }
 
@@ -166,8 +170,8 @@ export const getResults = createServerFn({ method: "POST" })
     return rows;
   });
 
-/** Ustoz qo'lda tekshiradigan javoblar (savol matni + o'quvchi yozgani). */
-export const getManualAnswers = createServerFn({ method: "POST" })
+/** Ustoz uchun: o'quvchi har bir savolga nima javob bergani, to'g'ri javob va olingan ball. */
+export const getSubmissionReview = createServerFn({ method: "POST" })
   .inputValidator((d: { password: string; id: string }) => ({
     password: String(d.password ?? ""),
     id: cleanId(d.id),
@@ -181,38 +185,16 @@ export const getManualAnswers = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (!sub?.test_id) return [];
+    if (!sub) throw new Error("Natija topilmadi");
+    if (!sub.test_id) return [];
     const { data: qs, error: qErr } = await db
       .from("test_questions")
-      .select("id, section, text, fields")
+      .select("id, section, text, kind, options, correct_index, fields, points")
       .eq("test_id", sub.test_id)
-      .eq("kind", "input")
-      .order("position");
+      .order("position")
+      .order("id");
     if (qErr) throw new Error(qErr.message);
-
-    const answers = (sub.answers ?? {}) as Record<string, unknown>;
-    const out: { section: string; text: string; label: string; points: number; answer: string }[] =
-      [];
-    for (const q of qs) {
-      const given = answers[q.id] as Record<string, string> | undefined;
-      const labels = new Map(
-        (Array.isArray(q.fields) ? (q.fields as { key: string; label: string }[]) : []).map((f) => [
-          f.key,
-          f.label,
-        ]),
-      );
-      for (const f of parseFields(q.fields)) {
-        if (f.answers !== null) continue;
-        out.push({
-          section: q.section,
-          text: q.text,
-          label: labels.get(f.key) ?? f.key,
-          points: f.points,
-          answer: given?.[f.key] ?? "",
-        });
-      }
-    }
-    return out;
+    return buildReview(qs, (sub.answers ?? {}) as AnswerMap);
   });
 
 /** Ustoz bitta o'quvchi natijasini o'chiradi. */

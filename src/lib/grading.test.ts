@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildReview,
   gradeAnswers,
   gradeLabel,
   isPassing,
@@ -137,5 +138,36 @@ describe("splitQuestionImage", () => {
   });
   it("belgi bo'lmasa matnni o'zgartirmaydi", () => {
     expect(splitQuestionImage("Oddiy savol")).toEqual({ text: "Oddiy savol", image: null });
+  });
+});
+
+describe("buildReview", () => {
+  const base = { section: "S", text: "Savol\n[[img:/flowgorithm/b1.svg]]" };
+  it("tanlov javobini va to'g'ri variantni ko'rsatadi", () => {
+    const [r] = buildReview([{ ...choice("a", 1), ...base }], { a: 3 });
+    expect(r).toMatchObject({
+      kind: "choice",
+      chosen: 3,
+      correct: 1,
+      earned: 0,
+      image: "/flowgorithm/b1.svg",
+      text: "Savol",
+    });
+  });
+  it("javob bermagan tanlov chosen=null", () => {
+    const [r] = buildReview([{ ...choice("a", 1), ...base }], {});
+    expect(r).toMatchObject({ chosen: null, earned: 0 });
+  });
+  it("kiritish maydonlari: to'g'ri, noto'g'ri va qo'lda", () => {
+    const r = buildReview([{ ...input, ...base }], { i: { x: "26", y: "5", why: "nimadir" } })[0]!;
+    expect(r.kind).toBe("input");
+    if (r.kind === "input") {
+      expect(r.fields.map((f) => f.earned)).toEqual([2.5, 0, null]);
+      expect(r.fields[2]!.given).toBe("nimadir");
+    }
+  });
+  it("bo'sh javob to'g'ri hisoblanmaydi", () => {
+    const r = buildReview([{ ...input, ...base }], {})[0]!;
+    if (r.kind === "input") expect(r.fields.every((f) => f.earned !== 2.5)).toBe(true);
   });
 });

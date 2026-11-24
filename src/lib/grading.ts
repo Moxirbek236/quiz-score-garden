@@ -135,3 +135,70 @@ export function splitQuestionImage(text: string): { text: string; image: string 
   const m = /\n?\[\[img:(\/[^\]\s]+)\]\]\s*$/.exec(text);
   return m ? { text: text.slice(0, m.index), image: m[1]! } : { text, image: null };
 }
+
+export type ReviewField = {
+  label: string;
+  given: string;
+  /** To'g'ri javoblar; `null` bo'lsa ustoz qo'lda tekshiradi. */
+  expected: string[] | null;
+  points: number;
+  /** Olingan ball; qo'lda tekshiriladigan maydonda `null`. */
+  earned: number | null;
+};
+
+export type ReviewItem = {
+  section: string;
+  text: string;
+  image: string | null;
+  points: number;
+} & (
+  | { kind: "choice"; options: string[]; chosen: number | null; correct: number; earned: number }
+  | { kind: "input"; fields: ReviewField[] }
+);
+
+export type ReviewQuestion = GradableQuestion & { section: string; text: string };
+
+/** Ustoz uchun: har bir savolga o'quvchi nima javob bergani va to'g'ri javob. */
+export function buildReview(questions: ReviewQuestion[], answers: AnswerMap): ReviewItem[] {
+  return questions.map((q): ReviewItem => {
+    const { text, image } = splitQuestionImage(q.text);
+    const given = answers[q.id];
+    const base = { section: q.section, text, image, points: q.points };
+    if (q.kind === "choice") {
+      const options = Array.isArray(q.options) ? (q.options as string[]) : [];
+      const chosen = typeof given === "number" ? given : null;
+      const correct = q.correct_index ?? -1;
+      return {
+        ...base,
+        kind: "choice",
+        options,
+        chosen,
+        correct,
+        earned: chosen === correct ? q.points : 0,
+      };
+    }
+    const labels = new Map(
+      (Array.isArray(q.fields) ? (q.fields as { key: string; label: string }[]) : []).map((f) => [
+        f.key,
+        f.label,
+      ]),
+    );
+    const fields = parseFields(q.fields).map((f): ReviewField => {
+      const value = given !== undefined && typeof given === "object" ? (given[f.key] ?? "") : "";
+      const earned =
+        f.answers === null
+          ? null
+          : f.answers.some((a) => normalizeAnswer(a) === normalizeAnswer(value)) && value !== ""
+            ? f.points
+            : 0;
+      return {
+        label: labels.get(f.key) ?? f.key,
+        given: value,
+        expected: f.answers,
+        points: f.points,
+        earned,
+      };
+    });
+    return { ...base, kind: "input", fields };
+  });
+}

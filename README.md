@@ -23,13 +23,13 @@ Drizzle migratsiyalari, Vitest. Deploy: Cloudflare Workers (Nitro).
 Qiymatlarni **repoga yozmang**. Lovable'da _Secrets_ orqali, lokal ishlashda `.env.local` ga
 kiriting. Namuna: [`.env.example`](./.env.example).
 
-| O'zgaruvchi                     | Qayerda | Vazifasi                                                            |
-| ------------------------------- | ------- | ------------------------------------------------------------------- |
-| `SUPABASE_URL`                  | server  | Supabase loyiha manzili                                             |
-| `SUPABASE_SERVICE_ROLE_KEY`     | server  | Faqat serverda! RLS'ni chetlab o'tadi, brauzerga bermang            |
-| `TEACHER_PASSWORD`              | server  | Ustoz paneli paroli. **O'rnatilmasa panelga hech kim kira olmaydi** |
-| `VITE_SUPABASE_URL`             | brauzer | Supabase manzili (ochiq)                                            |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | brauzer | Publishable kalit (ochiq bo'lishi mo'ljallangan)                    |
+| O'zgaruvchi                     | Qayerda | Vazifasi                                                                                                                         |
+| ------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_URL`                  | server  | Supabase loyiha manzili                                                                                                          |
+| `SUPABASE_SERVICE_ROLE_KEY`     | server  | Faqat serverda! RLS'ni chetlab o'tadi, brauzerga bermang                                                                         |
+| `TEACHER_PASSWORD`              | server  | Ustoz paneli paroli. O'rnatilmasa kodda yozilgan standart parol ishlaydi (`quiz.functions.ts`). O'zgartirish uchun env'ga yozing |
+| `VITE_SUPABASE_URL`             | brauzer | Supabase manzili (ochiq)                                                                                                         |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | brauzer | Publishable kalit (ochiq bo'lishi mo'ljallangan)                                                                                 |
 
 ## Lokal ishga tushirish
 

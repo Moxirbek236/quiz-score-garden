@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { deleteResult, getManualAnswers, getResults } from "@/lib/quiz.functions";
-import { gradeLabel, isPassing, percent } from "@/lib/grading";
+import { deleteResult, getResults, getSubmissionReview } from "@/lib/quiz.functions";
+import { gradeLabel, isPassing, percent, type ReviewItem } from "@/lib/grading";
 
 export const Route = createFileRoute("/teacher")({
   head: () => ({
@@ -23,12 +23,85 @@ type Row = Awaited<ReturnType<typeof getResults>>[number];
 const PASSWORD_STORAGE_KEY = "tp";
 const TABLE_HEADERS = ["Ism Familiya", "Guruh", "Test", "Ball", "Foiz", "Daraja", "Sana", ""];
 
+function ReviewList({ items }: { items: ReviewItem[] | null }) {
+  if (items === null) return <>Yuklanmoqda...</>;
+  if (items.length === 0) return <>Bu natija uchun javoblar mavjud emas.</>;
+  const ok = "text-success";
+  const bad = "text-destructive";
+  return (
+    <ol className="space-y-4">
+      {items.map((it, i) => (
+        <li key={i} className="rounded-xl bg-card p-4">
+          <p className="font-medium">
+            <span className="text-muted-foreground">{i + 1}.</span> {it.text}{" "}
+            <span className="text-muted-foreground">({it.points} ball)</span>
+          </p>
+          {it.image && (
+            <img
+              src={it.image}
+              alt="Blok-sxema"
+              className="mt-2 max-h-56 rounded-lg border border-border bg-white"
+            />
+          )}
+          {it.kind === "choice" ? (
+            <ul className="mt-2 space-y-1">
+              {it.options.map((o, oi) => {
+                const chosen = it.chosen === oi;
+                const correct = it.correct === oi;
+                return (
+                  <li
+                    key={oi}
+                    className={
+                      chosen ? (correct ? ok : bad) : correct ? ok : "text-muted-foreground"
+                    }
+                  >
+                    {chosen ? "● " : "○ "}
+                    {String.fromCharCode(65 + oi)}) {o}
+                    {chosen && correct && " ✓"}
+                    {chosen && !correct && " ✗ (o'quvchi shuni tanlagan)"}
+                    {!chosen && correct && " — to'g'ri javob"}
+                  </li>
+                );
+              })}
+              {it.chosen === null && <li className={bad}>Javob bermagan</li>}
+            </ul>
+          ) : (
+            <ul className="mt-2 space-y-1">
+              {it.fields.map((f, fi) => (
+                <li key={fi}>
+                  <span className="text-muted-foreground">{f.label}:</span>{" "}
+                  <span className={f.earned === null ? "font-medium" : f.earned > 0 ? ok : bad}>
+                    {f.given || "(javob bermagan)"}
+                  </span>
+                  {f.earned === null ? (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      — qo'lda tekshiring ({f.points} ball)
+                    </span>
+                  ) : f.earned > 0 ? (
+                    " ✓"
+                  ) : (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      ✗ to'g'ri javob: {f.expected?.[0]}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function TeacherPage() {
   const fetchResults = useServerFn(getResults);
   const removeResult = useServerFn(deleteResult);
-  const fetchManual = useServerFn(getManualAnswers);
+  const fetchReview = useServerFn(getSubmissionReview);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [manual, setManual] = useState<Awaited<ReturnType<typeof getManualAnswers>> | null>(null);
+  const [review, setReview] = useState<ReviewItem[] | null>(null);
   const [pw, setPw] = useState("");
   const [rows, setRows] = useState<Row[] | null>(null);
   const [err, setErr] = useState("");
@@ -74,15 +147,15 @@ function TeacherPage() {
     }
   }
 
-  async function toggleManual(r: Row) {
+  async function toggleReview(r: Row) {
     if (openId === r.id) {
       setOpenId(null);
       return;
     }
     setOpenId(r.id);
-    setManual(null);
+    setReview(null);
     try {
-      setManual(await fetchManual({ data: { password: pw, id: r.id } }));
+      setReview(await fetchReview({ data: { password: pw, id: r.id } }));
     } catch (x) {
       setErr((x as Error).message);
     }
@@ -191,7 +264,7 @@ function TeacherPage() {
                         </td>
                         <td className="whitespace-nowrap px-5 py-3 text-right">
                           <button
-                            onClick={() => void toggleManual(r)}
+                            onClick={() => void toggleReview(r)}
                             className="mr-4 text-sm text-primary hover:underline"
                           >
                             Javoblar
@@ -207,22 +280,7 @@ function TeacherPage() {
                       {openId === r.id && (
                         <tr className="border-b border-border bg-muted/40">
                           <td colSpan={TABLE_HEADERS.length} className="px-5 py-4 text-sm">
-                            {manual === null ? (
-                              "Yuklanmoqda..."
-                            ) : manual.length === 0 ? (
-                              "Qo'lda tekshiriladigan javob yo'q."
-                            ) : (
-                              <ul className="space-y-2">
-                                {manual.map((m, i) => (
-                                  <li key={i}>
-                                    <span className="text-muted-foreground">
-                                      {m.text.slice(0, 80)}… · {m.label} ({m.points} ball):
-                                    </span>{" "}
-                                    <span className="font-medium">{m.answer || "(bo'sh)"}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
+                            <ReviewList items={review} />
                           </td>
                         </tr>
                       )}
