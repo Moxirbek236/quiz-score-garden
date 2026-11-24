@@ -58,3 +58,6 @@ alter table public.test_questions enable row level security;
 alter table public.submissions enable row level security;
 alter table public.questions enable row level security;
 grant all on public.tests, public.test_questions, public.submissions, public.questions to service_role;
+
+-- Supabase API keshini yangilaydi, aks holda yangi jadvallar "schema cache" xatosini beradi.
+notify pgrst, 'reload schema';
