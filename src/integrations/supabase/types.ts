@@ -50,6 +50,7 @@ export type Database = {
           id: string
           last_name: string
           score: number
+          test_id: string | null
           total: number
         }
         Insert: {
@@ -60,6 +61,7 @@ export type Database = {
           id?: string
           last_name: string
           score?: number
+          test_id?: string | null
           total?: number
         }
         Update: {
@@ -70,7 +72,93 @@ export type Database = {
           id?: string
           last_name?: string
           score?: number
+          test_id?: string | null
           total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "submissions_test_id_fkey"
+            columns: ["test_id"]
+            isOneToOne: false
+            referencedRelation: "tests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      test_questions: {
+        Row: {
+          correct_index: number | null
+          fields: Json | null
+          id: string
+          kind: string
+          options: Json | null
+          partial: boolean
+          points: number
+          position: number
+          section: string
+          test_id: string
+          text: string
+        }
+        Insert: {
+          correct_index?: number | null
+          fields?: Json | null
+          id?: string
+          kind: string
+          options?: Json | null
+          partial?: boolean
+          points?: number
+          position?: number
+          section?: string
+          test_id: string
+          text: string
+        }
+        Update: {
+          correct_index?: number | null
+          fields?: Json | null
+          id?: string
+          kind?: string
+          options?: Json | null
+          partial?: boolean
+          points?: number
+          position?: number
+          section?: string
+          test_id?: string
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "test_questions_test_id_fkey"
+            columns: ["test_id"]
+            isOneToOne: false
+            referencedRelation: "tests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tests: {
+        Row: {
+          created_at: string
+          description: string
+          id: string
+          position: number
+          slug: string
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string
+          id?: string
+          position?: number
+          slug: string
+          title: string
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          id?: string
+          position?: number
+          slug?: string
+          title?: string
         }
         Relationships: []
       }
