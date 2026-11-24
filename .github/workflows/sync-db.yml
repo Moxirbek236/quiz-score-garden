@@ -2,7 +2,8 @@ name: Sync DB
 
 # Har push'da (main) seed savollari bazada borligini tekshiradi, yetishmaganini qo'shadi.
 # Repo Settings → Secrets and variables → Actions ichida SUPABASE_URL va
-# SUPABASE_SERVICE_ROLE_KEY ni kiriting.
+# SUPABASE_SERVICE_ROLE_KEY ni kiriting. Kiritilmagan bo'lsa qadam o'tkazib yuboriladi
+# (ilovaning o'zi ham ishga tushganda seed'ni bajaradi).
 on:
   push:
     branches: [main]
@@ -18,12 +19,24 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
+      - name: Check secrets
+        id: secrets
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY secrets yo'q, DB sync o'tkazib yuborildi."
+          fi
       - uses: actions/checkout@v4
+        if: steps.secrets.outputs.present == 'true'
       - uses: oven-sh/setup-bun@v2
+        if: steps.secrets.outputs.present == 'true'
       - run: bun install --frozen-lockfile
+        if: steps.secrets.outputs.present == 'true'
       - name: Sync tests to database
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        if: steps.secrets.outputs.present == 'true'
         run: bun run db:sync
