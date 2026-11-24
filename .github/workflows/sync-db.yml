@@ -1,0 +1,29 @@
+name: Sync DB
+
+# Har push'da (main) seed savollari bazada borligini tekshiradi, yetishmaganini qo'shadi.
+# Repo Settings → Secrets and variables → Actions ichida SUPABASE_URL va
+# SUPABASE_SERVICE_ROLE_KEY ni kiriting.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-db
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Sync tests to database
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: bun run db:sync

@@ -1,8 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
-import { getQuestions, submitTest } from "@/lib/quiz.functions";
-import { percent, type AnswerMap } from "@/lib/grading";
+import { useEffect, useState } from "react";
+import { getQuestions, getTests, submitTest, type PublicQuestion } from "@/lib/quiz.functions";
+import {
+  gradeLabel,
+  MAX_ANSWER_TEXT_LENGTH,
+  percent,
+  splitQuestionImage,
+  type AnswerMap,
+  type AnswerValue,
+} from "@/lib/grading";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -24,9 +31,9 @@ export const Route = createFileRoute("/")({
   component: StudentPage,
 });
 
-type Question = { id: string; text: string; options: string[] };
+type TestInfo = { id: string; title: string; description: string };
 type StudentInfo = { firstName: string; lastName: string; group: string };
-type Result = { score: number; total: number };
+type Result = { score: number; total: number; manualPoints: number };
 
 const INFO_FIELDS = [
   ["firstName", "Ism"],
@@ -34,16 +41,56 @@ const INFO_FIELDS = [
   ["group", "Guruh"],
 ] as const;
 
+/** Javob berilgan savollar soni (kiritish savolida kamida bitta maydon to'ldirilgan bo'lsa). */
+function countAnswered(questions: PublicQuestion[], answers: AnswerMap): number {
+  return questions.filter((q) => {
+    const a = answers[q.id];
+    if (a === undefined) return false;
+    return typeof a === "number" || Object.values(a).some((v) => v.trim() !== "");
+  }).length;
+}
+
+function QuestionTitle({ index, text }: { index: number; text: string }) {
+  const { text: body, image } = splitQuestionImage(text);
+  return (
+    <>
+      <h2 className="text-lg font-semibold">
+        <span className="text-accent">{index}.</span> {body}
+      </h2>
+      {image && (
+        <img
+          src={image}
+          alt="Blok-sxema"
+          loading="lazy"
+          className="mx-auto mt-4 max-w-full rounded-xl border border-border bg-white"
+        />
+      )}
+    </>
+  );
+}
+
 function StudentPage() {
+  const loadTests = useServerFn(getTests);
   const loadQuestions = useServerFn(getQuestions);
   const submit = useServerFn(submitTest);
+  const [tests, setTests] = useState<TestInfo[]>([]);
+  const [testId, setTestId] = useState("");
   const [step, setStep] = useState<"info" | "test" | "done">("info");
   const [info, setInfo] = useState<StudentInfo>({ firstName: "", lastName: "", group: "" });
-  const [questions, setQuestions] = useState<Question[]>([]);
+  const [questions, setQuestions] = useState<PublicQuestion[]>([]);
   const [answers, setAnswers] = useState<AnswerMap>({});
   const [result, setResult] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  useEffect(() => {
+    loadTests()
+      .then((list) => {
+        setTests(list);
+        setTestId((cur) => cur || list[0]?.id || "");
+      })
+      .catch((x) => setErr((x as Error).message));
+  }, [loadTests]);
 
   async function start(e: React.FormEvent) {
     e.preventDefault();
@@ -59,7 +106,7 @@ function StudentPage() {
     setBusy(true);
     setErr("");
     try {
-      setQuestions(await loadQuestions());
+      setQuestions(await loadQuestions({ data: { testId } }));
       setInfo(cleaned);
       setStep("test");
     } catch (x) {
@@ -70,12 +117,12 @@ function StudentPage() {
   }
 
   async function finish() {
-    const unanswered = Object.keys(answers).length < questions.length;
+    const unanswered = countAnswered(questions, answers) < questions.length;
     if (unanswered && !confirm("Hamma savolga javob bermadingiz. Baribir yakunlaysizmi?")) return;
     setBusy(true);
     setErr("");
     try {
-      setResult(await submit({ data: { ...info, answers } }));
+      setResult(await submit({ data: { ...info, testId, answers } }));
       setStep("done");
     } catch (x) {
       setErr((x as Error).message);
@@ -98,15 +145,24 @@ function StudentPage() {
         </header>
 
         {step === "info" && (
-          <InfoForm info={info} onChange={setInfo} onSubmit={start} busy={busy} err={err} />
+          <InfoForm
+            info={info}
+            onChange={setInfo}
+            tests={tests}
+            testId={testId}
+            onTestChange={setTestId}
+            onSubmit={start}
+            busy={busy}
+            err={err}
+          />
         )}
         {step === "test" && (
           <TestView
             info={info}
             questions={questions}
             answers={answers}
-            onAnswer={(questionId, optionIndex) =>
-              setAnswers((prev) => ({ ...prev, [questionId]: optionIndex }))
+            onAnswer={(questionId, value) =>
+              setAnswers((prev) => ({ ...prev, [questionId]: value }))
             }
             onFinish={finish}
             busy={busy}
@@ -122,11 +178,15 @@ function StudentPage() {
 function InfoForm(props: {
   info: StudentInfo;
   onChange: (info: StudentInfo) => void;
+  tests: TestInfo[];
+  testId: string;
+  onTestChange: (id: string) => void;
   onSubmit: (e: React.FormEvent) => void;
   busy: boolean;
   err: string;
 }) {
-  const { info, onChange, onSubmit, busy, err } = props;
+  const { info, onChange, tests, testId, onTestChange, onSubmit, busy, err } = props;
+  const selected = tests.find((t) => t.id === testId);
   return (
     <form onSubmit={onSubmit} className="rounded-2xl bg-card p-8 shadow-paper">
       <h1 className="text-4xl font-bold">Testni boshlash</h1>
@@ -143,9 +203,27 @@ function InfoForm(props: {
             />
           </label>
         ))}
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">Test</span>
+          <select
+            required
+            className="field"
+            value={testId}
+            onChange={(e) => onTestChange(e.target.value)}
+          >
+            {tests.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+          {selected?.description && (
+            <span className="mt-1 block text-sm text-muted-foreground">{selected.description}</span>
+          )}
+        </label>
       </div>
       {err && <p className="mt-4 text-sm text-destructive">{err}</p>}
-      <button disabled={busy} className="btn-primary mt-8 w-full">
+      <button disabled={busy || !testId} className="btn-primary mt-8 w-full">
         {busy ? "Yuklanmoqda..." : "Testni ochish"}
       </button>
     </form>
@@ -154,15 +232,15 @@ function InfoForm(props: {
 
 function TestView(props: {
   info: StudentInfo;
-  questions: Question[];
+  questions: PublicQuestion[];
   answers: AnswerMap;
-  onAnswer: (questionId: string, optionIndex: number) => void;
+  onAnswer: (questionId: string, value: AnswerValue) => void;
   onFinish: () => void;
   busy: boolean;
   err: string;
 }) {
   const { info, questions, answers, onAnswer, onFinish, busy, err } = props;
-  const answered = Object.keys(answers).length;
+  const answered = countAnswered(questions, answers);
   return (
     <div>
       <div className="sticky top-0 z-10 -mx-4 mb-6 bg-background/90 px-4 py-3 backdrop-blur">
@@ -184,31 +262,61 @@ function TestView(props: {
       <ol className="space-y-5">
         {questions.map((q, i) => (
           <li key={q.id} className="rounded-2xl bg-card p-6 shadow-paper">
-            <h2 className="text-lg font-semibold">
-              <span className="text-accent">{i + 1}.</span> {q.text}
-            </h2>
-            <div className="mt-4 grid gap-2">
-              {q.options.map((option, optionIndex) => {
-                const selected = answers[q.id] === optionIndex;
-                return (
-                  <button
-                    key={optionIndex}
-                    type="button"
-                    onClick={() => onAnswer(q.id, optionIndex)}
-                    className={`rounded-xl border px-4 py-3 text-left transition ${
-                      selected
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border hover:bg-muted"
-                    }`}
-                  >
-                    <span className="mr-2 font-semibold">
-                      {String.fromCharCode(65 + optionIndex)})
-                    </span>
-                    {option}
-                  </button>
-                );
-              })}
-            </div>
+            {(i === 0 || questions[i - 1]!.section !== q.section) && q.section && (
+              <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-primary">
+                {q.section}
+              </p>
+            )}
+            <QuestionTitle index={i + 1} text={q.text} />
+            {q.kind === "choice" ? (
+              <div className="mt-4 grid gap-2">
+                {q.options.map((option, optionIndex) => {
+                  const selected = answers[q.id] === optionIndex;
+                  return (
+                    <button
+                      key={optionIndex}
+                      type="button"
+                      onClick={() => onAnswer(q.id, optionIndex)}
+                      className={`rounded-xl border px-4 py-3 text-left transition ${
+                        selected
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border hover:bg-muted"
+                      }`}
+                    >
+                      <span className="mr-2 font-semibold">
+                        {String.fromCharCode(65 + optionIndex)})
+                      </span>
+                      {option}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-3">
+                {q.fields.map((f) => {
+                  const current = answers[q.id];
+                  const value =
+                    current !== undefined && typeof current === "object"
+                      ? (current[f.key] ?? "")
+                      : "";
+                  return (
+                    <label key={f.key} className="block">
+                      <span className="mb-1 block text-sm font-medium">{f.label}</span>
+                      <input
+                        className="field"
+                        value={value}
+                        maxLength={MAX_ANSWER_TEXT_LENGTH}
+                        onChange={(e) => {
+                          const prev =
+                            current !== undefined && typeof current === "object" ? current : {};
+                          onAnswer(q.id, { ...prev, [f.key]: e.target.value });
+                        }}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </li>
         ))}
       </ol>
@@ -228,8 +336,13 @@ function ResultView({ firstName, result }: { firstName: string; result: Result }
         {result.score}/{result.total}
       </p>
       <p className="mt-2 text-2xl font-semibold text-accent">
-        {percent(result.score, result.total)}%
+        {percent(result.score, result.total)}% · {gradeLabel(result.score, result.total)}
       </p>
+      {result.manualPoints > 0 && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          Yana {result.manualPoints} ball qiymatidagi javoblarni ustoz qo'lda tekshiradi.
+        </p>
+      )}
       <p className="mt-6 text-muted-foreground">
         Natija ustozingizga yuborildi. Rahmat, {firstName}!
       </p>

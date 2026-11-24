@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { getResults } from "@/lib/quiz.functions";
-import { isPassing, percent } from "@/lib/grading";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { deleteResult, getManualAnswers, getResults } from "@/lib/quiz.functions";
+import { gradeLabel, isPassing, percent } from "@/lib/grading";
 
 export const Route = createFileRoute("/teacher")({
   head: () => ({
@@ -21,10 +21,14 @@ export const Route = createFileRoute("/teacher")({
 type Row = Awaited<ReturnType<typeof getResults>>[number];
 
 const PASSWORD_STORAGE_KEY = "tp";
-const TABLE_HEADERS = ["Ism Familiya", "Guruh", "Ball", "Foiz", "Sana"];
+const TABLE_HEADERS = ["Ism Familiya", "Guruh", "Test", "Ball", "Foiz", "Daraja", "Sana", ""];
 
 function TeacherPage() {
   const fetchResults = useServerFn(getResults);
+  const removeResult = useServerFn(deleteResult);
+  const fetchManual = useServerFn(getManualAnswers);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [manual, setManual] = useState<Awaited<ReturnType<typeof getManualAnswers>> | null>(null);
   const [pw, setPw] = useState("");
   const [rows, setRows] = useState<Row[] | null>(null);
   const [err, setErr] = useState("");
@@ -50,6 +54,35 @@ function TeacherPage() {
     setErr("");
     try {
       setRows(await fetchResults({ data: { password: pw } }));
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  }
+
+  async function remove(r: Row) {
+    if (
+      !confirm(`${r.first_name} ${r.last_name} natijasini o'chirasizmi? Buni qaytarib bo'lmaydi.`)
+    )
+      return;
+    setErr("");
+    try {
+      await removeResult({ data: { password: pw, id: r.id } });
+      setRows((prev) => prev?.filter((x) => x.id !== r.id) ?? prev);
+      if (openId === r.id) setOpenId(null);
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  }
+
+  async function toggleManual(r: Row) {
+    if (openId === r.id) {
+      setOpenId(null);
+      return;
+    }
+    setOpenId(r.id);
+    setManual(null);
+    try {
+      setManual(await fetchManual({ data: { password: pw, id: r.id } }));
     } catch (x) {
       setErr((x as Error).message);
     }
@@ -119,7 +152,7 @@ function TeacherPage() {
             </div>
             {err && (
               <p role="alert" className="mb-4 text-sm text-destructive">
-                Yangilab bo'lmadi: {err}
+                Xato: {err}
               </p>
             )}
             <div className="overflow-x-auto rounded-2xl bg-card shadow-paper">
@@ -135,25 +168,65 @@ function TeacherPage() {
                 </thead>
                 <tbody>
                   {shown.map((r) => (
-                    <tr key={r.id} className="border-b border-border last:border-0">
-                      <td className="px-5 py-3 font-medium">
-                        {r.first_name} {r.last_name}
-                      </td>
-                      <td className="px-5 py-3">{r.group_name}</td>
-                      <td className="px-5 py-3">
-                        {r.score}/{r.total}
-                      </td>
-                      <td
-                        className={`px-5 py-3 font-semibold ${
-                          isPassing(r.score, r.total) ? "text-success" : "text-destructive"
-                        }`}
-                      >
-                        {percent(r.score, r.total)}%
-                      </td>
-                      <td className="px-5 py-3 text-muted-foreground">
-                        {new Date(r.created_at).toLocaleString("uz-UZ")}
-                      </td>
-                    </tr>
+                    <Fragment key={r.id}>
+                      <tr className="border-b border-border last:border-0">
+                        <td className="px-5 py-3 font-medium">
+                          {r.first_name} {r.last_name}
+                        </td>
+                        <td className="px-5 py-3">{r.group_name}</td>
+                        <td className="px-5 py-3">{r.tests?.title ?? "—"}</td>
+                        <td className="px-5 py-3">
+                          {r.score}/{r.total}
+                        </td>
+                        <td
+                          className={`px-5 py-3 font-semibold ${
+                            isPassing(r.score, r.total) ? "text-success" : "text-destructive"
+                          }`}
+                        >
+                          {percent(r.score, r.total)}%
+                        </td>
+                        <td className="px-5 py-3">{gradeLabel(r.score, r.total)}</td>
+                        <td className="px-5 py-3 text-muted-foreground">
+                          {new Date(r.created_at).toLocaleString("uz-UZ")}
+                        </td>
+                        <td className="whitespace-nowrap px-5 py-3 text-right">
+                          <button
+                            onClick={() => void toggleManual(r)}
+                            className="mr-4 text-sm text-primary hover:underline"
+                          >
+                            Javoblar
+                          </button>
+                          <button
+                            onClick={() => void remove(r)}
+                            className="text-sm text-destructive hover:underline"
+                          >
+                            O'chirish
+                          </button>
+                        </td>
+                      </tr>
+                      {openId === r.id && (
+                        <tr className="border-b border-border bg-muted/40">
+                          <td colSpan={TABLE_HEADERS.length} className="px-5 py-4 text-sm">
+                            {manual === null ? (
+                              "Yuklanmoqda..."
+                            ) : manual.length === 0 ? (
+                              "Qo'lda tekshiriladigan javob yo'q."
+                            ) : (
+                              <ul className="space-y-2">
+                                {manual.map((m, i) => (
+                                  <li key={i}>
+                                    <span className="text-muted-foreground">
+                                      {m.text.slice(0, 80)}… · {m.label} ({m.points} ball):
+                                    </span>{" "}
+                                    <span className="font-medium">{m.answer || "(bo'sh)"}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                   {shown.length === 0 && (
                     <tr>

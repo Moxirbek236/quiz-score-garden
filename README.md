@@ -74,3 +74,17 @@ Sxema `drizzle/migrations/` da. **Sxemani va ma'lumotlarni Lovable orqali o'zgar
 Loyiha [Lovable](https://lovable.dev) bilan bog'langan: `main` ga tushgan commit'lar editorda
 ko'rinadi. Commit tarixini qayta yozmang (force push, rebase, amend).
 Editor: https://lovable.dev/projects/54ebdc04-2850-5a1c-b8b8-d38c4a96fad1
+
+## Testlarni bazaga sinxronlash
+
+Savollar `src/lib/seed/tests.ts` da. Server ishga tushganda (har deploy / push'dan keyin birinchi
+so'rovda) va `Sync DB` GitHub Action'ida (`bun run db:sync`) quyidagilar bajariladi:
+
+1. Eski test ma'lumotlari tozalanadi (`questions` jadvali va `test_id`'siz natijalar).
+2. Har bir test va har bir savol **bittalab** tekshiriladi: yo'q bo'lsa qo'shiladi, o'zgargan bo'lsa
+   yangilanadi, takroriy / seed'da yo'q savollar o'chiriladi.
+
+Ustoz paneli (`/teacher`) dan bitta o'quvchi natijasini "O'chirish" tugmasi bilan o'chirish mumkin.
+
+> ⚠️ Seed faylida to'g'ri javoblar bor. Repo ochiq (public) bo'lsa o'quvchilar ularni ko'ra oladi:
+> repo'ni private qiling.

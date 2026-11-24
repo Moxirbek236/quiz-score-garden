@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import {
   gradeAnswers,
   MAX_ANSWERS_PER_SUBMISSION,
+  parseFields,
   sanitizeAnswers,
   type AnswerMap,
 } from "./grading";
@@ -11,6 +12,7 @@ const MAX_NAME_LENGTH = 100;
 const RESULTS_PAGE_SIZE = 1000;
 /** Cheksiz sikldan himoya: ko'pi bilan RESULTS_PAGE_SIZE * MAX_RESULT_PAGES ta natija. */
 const MAX_RESULT_PAGES = 20;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function safeEqual(a: string, b: string) {
   let diff = a.length ^ b.length;
@@ -30,74 +32,130 @@ function cleanText(value: unknown): string {
     .slice(0, MAX_NAME_LENGTH);
 }
 
-export const getQuestions = createServerFn({ method: "GET" }).handler(async () => {
+function cleanId(value: unknown): string {
+  const id = String(value ?? "");
+  if (!UUID_RE.test(id)) throw new Error("Noto'g'ri identifikator");
+  return id;
+}
+
+/** Server ishga tushganda eski ma'lumotlarni tozalab, seed savollarini sinxronlaydi (bir marta). */
+async function getDb() {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data, error } = await supabaseAdmin
-    .from("questions")
-    .select("id, text, options, position")
+  const { ensureSeeded } = await import("./seed/sync.server");
+  await ensureSeeded(supabaseAdmin);
+  return supabaseAdmin;
+}
+
+export const getTests = createServerFn({ method: "GET" }).handler(async () => {
+  const db = await getDb();
+  const { data, error } = await db
+    .from("tests")
+    .select("id, title, description")
     .order("position")
-    // Bir xil `position` bo'lsa ham tartib har safar bir xil bo'lishi uchun.
     .order("id");
   if (error) throw new Error(error.message);
-  if (data.length === 0) throw new Error("Hozircha test savollari mavjud emas");
-  return data.map((q) => ({ id: q.id, text: q.text, options: q.options as string[] }));
+  if (data.length === 0) throw new Error("Hozircha testlar mavjud emas");
+  return data;
 });
+
+export type PublicQuestion = {
+  id: string;
+  section: string;
+  text: string;
+  kind: "choice" | "input";
+  points: number;
+  options: string[];
+  /** Kiritish savollari uchun maydonlar. To'g'ri javoblar bu yerda YO'Q. */
+  fields: { key: string; label: string; points: number }[];
+};
+
+export const getQuestions = createServerFn({ method: "POST" })
+  .inputValidator((d: { testId: string }) => ({ testId: cleanId(d.testId) }))
+  .handler(async ({ data }): Promise<PublicQuestion[]> => {
+    const db = await getDb();
+    const { data: rows, error } = await db
+      .from("test_questions")
+      .select("id, section, text, kind, options, fields, points")
+      .eq("test_id", data.testId)
+      .order("position")
+      .order("id");
+    if (error) throw new Error(error.message);
+    if (rows.length === 0) throw new Error("Bu testda savollar mavjud emas");
+    return rows.map((q) => ({
+      id: q.id,
+      section: q.section,
+      text: q.text,
+      kind: q.kind as "choice" | "input",
+      points: q.points,
+      options: Array.isArray(q.options) ? (q.options as string[]) : [],
+      fields: (Array.isArray(q.fields)
+        ? (q.fields as { key: string; label: string; points: number }[])
+        : []
+      ).map((f) => ({ key: f.key, label: f.label, points: f.points })),
+    }));
+  });
 
 export const submitTest = createServerFn({ method: "POST" })
   .inputValidator(
-    (d: { firstName: string; lastName: string; group: string; answers: AnswerMap }) => {
+    (d: {
+      firstName: string;
+      lastName: string;
+      group: string;
+      testId: string;
+      answers: AnswerMap;
+    }) => {
       const firstName = cleanText(d.firstName);
       const lastName = cleanText(d.lastName);
       const group = cleanText(d.group);
       if (!firstName || !lastName || !group) throw new Error("Barcha maydonlarni to'ldiring");
+      const testId = cleanId(d.testId);
 
       const answers = d.answers ?? {};
       if (typeof answers !== "object" || Object.keys(answers).length > MAX_ANSWERS_PER_SUBMISSION) {
         throw new Error("Javoblar noto'g'ri formatda");
       }
-      return { firstName, lastName, group, answers };
+      return { firstName, lastName, group, testId, answers };
     },
   )
   .handler(async ({ data }) => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: qs, error } = await supabaseAdmin
-      .from("questions")
-      .select("id, options, correct_index");
+    const db = await getDb();
+    const { data: qs, error } = await db
+      .from("test_questions")
+      .select("id, kind, options, correct_index, fields, points")
+      .eq("test_id", data.testId);
     if (error) throw new Error(error.message);
-    if (qs.length === 0) throw new Error("Hozircha test savollari mavjud emas");
+    if (qs.length === 0) throw new Error("Bu testda savollar mavjud emas");
 
-    // Faqat mavjud savollarga, yaroqli variant oralig'idagi javoblar bazaga yoziladi.
-    const answers = sanitizeAnswers(
-      qs.map((q) => ({ id: q.id, optionCount: Array.isArray(q.options) ? q.options.length : 0 })),
-      data.answers,
-    );
-    const { score, total } = gradeAnswers(qs, answers);
+    // Faqat mavjud savollarga, yaroqli shakldagi javoblar bazaga yoziladi.
+    const answers = sanitizeAnswers(qs, data.answers);
+    const { score, total, manualPoints } = gradeAnswers(qs, answers);
 
-    const { error: insertError } = await supabaseAdmin.from("submissions").insert({
+    const { error: insertError } = await db.from("submissions").insert({
       first_name: data.firstName,
       last_name: data.lastName,
       group_name: data.group,
+      test_id: data.testId,
       answers,
       score,
       total,
     });
     if (insertError) throw new Error(insertError.message);
-    return { score, total };
+    return { score, total, manualPoints };
   });
 
 export const getResults = createServerFn({ method: "POST" })
   .inputValidator((d: { password: string }) => ({ password: String(d.password ?? "") }))
   .handler(async ({ data }) => {
     checkTeacher(data.password);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const db = await getDb();
 
     // 1000 qatordan keyin natijalar jimgina kesilib qolmasligi uchun sahifalab o'qiymiz.
     const rows = [];
     for (let page = 0; page < MAX_RESULT_PAGES; page++) {
       const from = page * RESULTS_PAGE_SIZE;
-      const { data: chunk, error } = await supabaseAdmin
+      const { data: chunk, error } = await db
         .from("submissions")
-        .select("id, first_name, last_name, group_name, score, total, created_at")
+        .select("id, first_name, last_name, group_name, score, total, created_at, tests(title)")
         .order("created_at", { ascending: false })
         .order("id")
         .range(from, from + RESULTS_PAGE_SIZE - 1);
@@ -106,4 +164,71 @@ export const getResults = createServerFn({ method: "POST" })
       if (chunk.length < RESULTS_PAGE_SIZE) break;
     }
     return rows;
+  });
+
+/** Ustoz qo'lda tekshiradigan javoblar (savol matni + o'quvchi yozgani). */
+export const getManualAnswers = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string; id: string }) => ({
+    password: String(d.password ?? ""),
+    id: cleanId(d.id),
+  }))
+  .handler(async ({ data }) => {
+    checkTeacher(data.password);
+    const db = await getDb();
+    const { data: sub, error } = await db
+      .from("submissions")
+      .select("answers, test_id")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!sub?.test_id) return [];
+    const { data: qs, error: qErr } = await db
+      .from("test_questions")
+      .select("id, section, text, fields")
+      .eq("test_id", sub.test_id)
+      .eq("kind", "input")
+      .order("position");
+    if (qErr) throw new Error(qErr.message);
+
+    const answers = (sub.answers ?? {}) as Record<string, unknown>;
+    const out: { section: string; text: string; label: string; points: number; answer: string }[] =
+      [];
+    for (const q of qs) {
+      const given = answers[q.id] as Record<string, string> | undefined;
+      const labels = new Map(
+        (Array.isArray(q.fields) ? (q.fields as { key: string; label: string }[]) : []).map((f) => [
+          f.key,
+          f.label,
+        ]),
+      );
+      for (const f of parseFields(q.fields)) {
+        if (f.answers !== null) continue;
+        out.push({
+          section: q.section,
+          text: q.text,
+          label: labels.get(f.key) ?? f.key,
+          points: f.points,
+          answer: given?.[f.key] ?? "",
+        });
+      }
+    }
+    return out;
+  });
+
+/** Ustoz bitta o'quvchi natijasini o'chiradi. */
+export const deleteResult = createServerFn({ method: "POST" })
+  .inputValidator((d: { password: string; id: string }) => ({
+    password: String(d.password ?? ""),
+    id: cleanId(d.id),
+  }))
+  .handler(async ({ data }) => {
+    checkTeacher(data.password);
+    const db = await getDb();
+    const { data: removed, error } = await db
+      .from("submissions")
+      .delete()
+      .eq("id", data.id)
+      .select("id");
+    if (error) throw new Error(error.message);
+    return { deleted: removed.length };
   });
